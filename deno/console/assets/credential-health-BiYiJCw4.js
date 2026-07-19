@@ -1,0 +1,1 @@
+function e(e,t){let n=e.health_json?.open_until;return e.health_kind===`rate_limited`&&typeof n==`number`&&Number.isFinite(n)&&n<=t}function t(t,n){return!e(t,n)}function n(e,n){return e.filter(e=>t(e,n))}function r(e,t){return[...n(e,t)].sort((e,t)=>t.updated_at-e.updated_at)[0]}function i(){return Math.floor(Date.now()/1e3)}export{r as n,i as r,n as t};
