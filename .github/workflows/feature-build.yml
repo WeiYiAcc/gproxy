@@ -1,0 +1,57 @@
+name: Feature binary build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/custom-raw-passthrough
+
+concurrency:
+  group: feature-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x86_64:
+    name: Console + Linux x86_64 binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+
+      # This also syncs console/dist into assets/console for rust-embed.
+      - name: Build console
+        working-directory: console
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build backend
+        run: cargo build --release --bin gproxy --target x86_64-unknown-linux-gnu
+
+      - name: Smoke check
+        run: ./target/x86_64-unknown-linux-gnu/release/gproxy --help
+
+      - name: Upload feature binary and console
+        uses: actions/upload-artifact@v7
+        with:
+          name: gproxy-feature-linux-x86_64
+          path: |
+            target/x86_64-unknown-linux-gnu/release/gproxy
+            console/dist
+          if-no-files-found: error
+          retention-days: 14
