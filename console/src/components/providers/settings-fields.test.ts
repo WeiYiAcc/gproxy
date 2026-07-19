@@ -8,6 +8,9 @@ describe("custom provider settings", () => {
     expect(state.apiKeyHeader).toBe("bearer");
     expect(state.preserveRawRequestBody).toBe(false);
     expect(state.prefetchStreamBeforeCommit).toBe(false);
+    expect(state.usageEnabled).toBe(false);
+    expect(state.usageBaseUrl).toBe("");
+    expect(state.usagePath).toBe("");
   });
 
   it("assembles all custom compatibility settings and preserves unknown fields", () => {
@@ -16,6 +19,9 @@ describe("custom provider settings", () => {
       api_key_header: "x-api-key",
       preserve_raw_request_body: true,
       prefetch_stream_before_commit: true,
+      usage_enabled: true,
+      usage_base_url: "https://api.randomlabs.ai",
+      usage_path: "/billing/usage",
     });
     expect(
       assembleSettings({ vendor_option: "kept" }, state, "custom"),
@@ -24,6 +30,9 @@ describe("custom provider settings", () => {
       api_key_header: "x-api-key",
       preserve_raw_request_body: true,
       prefetch_stream_before_commit: true,
+      usage_enabled: true,
+      usage_base_url: "https://api.randomlabs.ai",
+      usage_path: "/billing/usage",
       vendor_option: "kept",
     });
   });
@@ -33,10 +42,16 @@ describe("custom provider settings", () => {
       api_key_header: "x-goog-api-key",
       preserve_raw_request_body: true,
       prefetch_stream_before_commit: true,
+      usage_enabled: true,
+      usage_base_url: "https://quota.example",
+      usage_path: "/usage",
     });
     const result = assembleSettings({}, state, "openai");
     expect(result).not.toHaveProperty("api_key_header");
     expect(result).not.toHaveProperty("preserve_raw_request_body");
     expect(result).not.toHaveProperty("prefetch_stream_before_commit");
+    expect(result).not.toHaveProperty("usage_enabled");
+    expect(result).not.toHaveProperty("usage_base_url");
+    expect(result).not.toHaveProperty("usage_path");
   });
 });

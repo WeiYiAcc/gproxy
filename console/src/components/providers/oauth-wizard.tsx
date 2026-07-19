@@ -26,7 +26,9 @@ export function OAuthWizard({ provider, onDone }: OAuthWizardProps) {
   const { t } = useTranslation("providers");
   const queryClient = useQueryClient();
   const meta = channelMeta(provider.channel);
-  const modes = meta?.loginModes ?? [];
+  const slateCustom = provider.channel === "custom"
+    && (provider.settings_json as Record<string, unknown> | null)?.usage_enabled === true;
+  const modes: LoginMode[] = slateCustom ? ["device"] : (meta?.loginModes ?? []);
   const [mode, setMode] = useState<LoginMode>(modes[0] ?? "authcode");
   const [credLabel, setCredLabel] = useState("");
   // Kiro has four credential methods that span both the device and authcode

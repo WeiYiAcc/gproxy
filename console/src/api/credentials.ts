@@ -60,6 +60,7 @@ export interface UsageCredits {
   has_credits?: boolean;
   unlimited?: boolean;
   balance?: string;
+  available_credits?: number;
   used_credits?: number;
   monthly_limit?: number;
   currency?: string;

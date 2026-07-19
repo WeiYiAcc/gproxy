@@ -117,6 +117,8 @@ export function UsageCard({ credentialId }: { credentialId: number }) {
             <p className="text-sm">
               <span className="text-muted-foreground">{t("usage.credits")}:</span>{" "}
               {snapshot.credits.unlimited ? "∞"
+                : snapshot.credits.available_credits !== undefined
+                  ? `${snapshot.credits.available_credits}${snapshot.credits.monthly_limit !== undefined ? ` / ${snapshot.credits.monthly_limit}` : ""}`
                 : snapshot.credits.balance ?? (snapshot.credits.used_credits !== undefined && snapshot.credits.monthly_limit !== undefined
                   ? `${snapshot.credits.used_credits} / ${snapshot.credits.monthly_limit}`
                 : JSON.stringify(snapshot.credits))}

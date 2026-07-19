@@ -111,6 +111,8 @@ fn builtin_channels() -> Vec<Arc<dyn Channel>> {
 /// Authcode, device-code, and cookie-capable channels all live here.
 fn builtin_logins() -> Vec<(&'static str, Arc<dyn ChannelLogin>)> {
     vec![
+        #[cfg(feature = "channel-custom")]
+        ("custom", Arc::new(bulletins::custom::CustomChannel)),
         #[cfg(feature = "channel-codex")]
         ("codex", Arc::new(bulletins::codex::CodexChannel)),
         #[cfg(feature = "channel-claudecode")]

@@ -31,6 +31,8 @@ export function CredentialsTab({ provider }: { provider: Provider }) {
   const queryClient = useQueryClient();
   const { data: creds, isPending } = useQuery(credentialsQuery(provider.id));
   const meta = channelMeta(provider.channel);
+  const customUsageEnabled = provider.channel === "custom"
+    && (provider.settings_json as Record<string, unknown> | null)?.usage_enabled === true;
   const rows = creds ?? [];
   const batch = useBatch("credentials", ["providers", provider.id, "credentials"]);
   const ids = rows.map((c) => c.id);
@@ -59,7 +61,7 @@ export function CredentialsTab({ provider }: { provider: Provider }) {
 
   const actions = (c: CredentialView) => (
     <div className="flex items-center justify-end gap-1">
-      {meta?.usage && (
+      {(meta?.usage || customUsageEnabled) && (
         <Button variant="ghost" size="icon" aria-label={t("usage.open")} onClick={(e) => { e.stopPropagation(); setUsageTarget(c); }}>
           <Gauge className="size-4" aria-hidden />
         </Button>
@@ -101,9 +103,9 @@ export function CredentialsTab({ provider }: { provider: Provider }) {
       <div className="flex items-center justify-end gap-2">
         {!batch.mode && (
           <>
-            {(meta?.loginModes.length ?? 0) > 0 && (
+            {((meta?.loginModes.length ?? 0) > 0 || customUsageEnabled) && (
               <Button variant="outline" onClick={() => setWizardOpen(true)}>
-                {t("creds.oauth")}
+                {customUsageEnabled ? t("creds.connectSlate") : t("creds.oauth")}
               </Button>
             )}
             {meta?.family === "api_key" && (

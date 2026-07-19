@@ -39,6 +39,9 @@ export interface SettingsState {
   apiKeyHeader: ApiKeyHeader;
   preserveRawRequestBody: boolean;
   prefetchStreamBeforeCommit: boolean;
+  usageEnabled: boolean;
+  usageBaseUrl: string;
+  usagePath: string;
   consecutiveFailures: string;
   cooldownSecs: string;
   autoRefreshModels: boolean;
@@ -67,6 +70,9 @@ export function initSettingsState(settingsJson: unknown): SettingsState {
       : "bearer",
     preserveRawRequestBody: s.preserve_raw_request_body === true,
     prefetchStreamBeforeCommit: s.prefetch_stream_before_commit === true,
+    usageEnabled: s.usage_enabled === true,
+    usageBaseUrl: typeof s.usage_base_url === "string" ? s.usage_base_url : "",
+    usagePath: typeof s.usage_path === "string" ? s.usage_path : "",
     consecutiveFailures:
       typeof cb.consecutive_failures === "number"
         ? String(cb.consecutive_failures)
@@ -113,10 +119,30 @@ export function assembleSettings(
     } else {
       delete result.prefetch_stream_before_commit;
     }
+    if (state.usageEnabled) {
+      result.usage_enabled = true;
+      if (state.usageBaseUrl.trim()) {
+        result.usage_base_url = state.usageBaseUrl.trim();
+      } else {
+        delete result.usage_base_url;
+      }
+      if (state.usagePath.trim()) {
+        result.usage_path = state.usagePath.trim();
+      } else {
+        delete result.usage_path;
+      }
+    } else {
+      delete result.usage_enabled;
+      delete result.usage_base_url;
+      delete result.usage_path;
+    }
   } else {
     delete result.api_key_header;
     delete result.preserve_raw_request_body;
     delete result.prefetch_stream_before_commit;
+    delete result.usage_enabled;
+    delete result.usage_base_url;
+    delete result.usage_path;
   }
 
   // circuit_breaker: include only when BOTH fields are filled
@@ -262,6 +288,41 @@ export function SettingsFields({ channel, state, onChange }: SettingsFieldsProps
             </div>
             <p className="text-xs text-muted-foreground">{t("form.prefetchStreamBeforeCommitHint")}</p>
           </div>
+          <div className="grid gap-1">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="sf-usage-enabled">{t("fields.usageEnabled")}</Label>
+              <Switch
+                id="sf-usage-enabled"
+                checked={state.usageEnabled}
+                onCheckedChange={(value) => onChange({ usageEnabled: value })}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">{t("form.usageEnabledHint")}</p>
+          </div>
+          {state.usageEnabled && (
+            <>
+              <div className="grid gap-2">
+                <Label htmlFor="sf-usage-base-url">{t("fields.usageBaseUrl")}</Label>
+                <Input
+                  id="sf-usage-base-url"
+                  value={state.usageBaseUrl}
+                  onChange={(event) => onChange({ usageBaseUrl: event.target.value })}
+                  placeholder="https://api.randomlabs.ai"
+                />
+                <p className="text-xs text-muted-foreground">{t("form.usageBaseUrlHint")}</p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="sf-usage-path">{t("fields.usagePath")}</Label>
+                <Input
+                  id="sf-usage-path"
+                  value={state.usagePath}
+                  onChange={(event) => onChange({ usagePath: event.target.value })}
+                  placeholder="/billing/usage"
+                />
+                <p className="text-xs text-muted-foreground">{t("form.usagePathHint")}</p>
+              </div>
+            </>
+          )}
         </>
       )}
 

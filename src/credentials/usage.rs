@@ -215,6 +215,12 @@ mod tests {
             .expect("claudecode registered")
     }
 
+    fn custom() -> Arc<dyn Channel> {
+        crate::channel::registry::ChannelRegistry::with_builtin()
+            .get("custom")
+            .expect("custom registered")
+    }
+
     /// The driver runs a real channel's prepare → (stub send) → parse path.
     #[tokio::test]
     async fn fetch_with_parses_real_channel_response() {
@@ -230,6 +236,40 @@ mod tests {
         let names: Vec<&str> = snap.windows.iter().map(|w| w.name.as_str()).collect();
         assert_eq!(names, ["five_hour", "seven_day"]);
         assert_eq!(snap.windows[1].used_percent, Some(95.0));
+    }
+
+    #[tokio::test]
+    async fn fetch_with_parses_custom_usage_response() {
+        let client: Arc<dyn UpstreamClient> = Arc::new(CannedUpstream {
+            status: StatusCode::OK,
+            body: br#"{"credits":{"total":100,"available":40}}"#,
+        });
+        let snapshot = fetch_with(
+            &custom(),
+            &json!({"api_key":"key"}),
+            &json!({"usage_enabled":true,"api_key_header":"x-api-key"}),
+            &client,
+        )
+        .await
+        .expect("snapshot");
+        assert_eq!(
+            snapshot
+                .credits
+                .and_then(|credits| credits.available_credits),
+            Some(40.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_usage_disabled_is_unsupported() {
+        let client: Arc<dyn UpstreamClient> = Arc::new(CannedUpstream {
+            status: StatusCode::OK,
+            body: b"{}",
+        });
+        let error = fetch_with(&custom(), &json!({"api_key":"key"}), &json!({}), &client)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, UsageError::Unsupported));
     }
 
     /// A non-2xx upstream surfaces as `Status`, not a bogus empty snapshot.
