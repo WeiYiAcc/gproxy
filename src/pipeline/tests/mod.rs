@@ -45,6 +45,13 @@ fn assert_openai_chat_request(seen: &Seen, model: &str, stream: bool) -> Value {
     up
 }
 
+#[derive(Clone)]
+enum FakeStreamItem {
+    Chunk(Bytes),
+    Error(&'static str),
+    Pending,
+}
+
 struct FakeUpstream {
     seen: Mutex<Vec<Seen>>,
     /// canned non-stream response statuses, consumed per call; last repeats
@@ -53,6 +60,8 @@ struct FakeUpstream {
     response: Bytes,
     /// canned stream chunks (send_streaming)
     chunks: Vec<Bytes>,
+    /// Optional per-call stream scripts; each call consumes one script.
+    stream_scripts: Mutex<VecDeque<Vec<FakeStreamItem>>>,
     calls: AtomicUsize,
 }
 
@@ -79,14 +88,38 @@ impl UpstreamClient for FakeUpstream {
         req: http::Request<Bytes>,
     ) -> Result<(StatusCode, HeaderMap, RespStream), ClientError> {
         self.capture(&req);
+        let i = self.calls.fetch_add(1, Ordering::SeqCst);
+        let status = self
+            .statuses
+            .get(i)
+            .or_else(|| self.statuses.last())
+            .copied()
+            .unwrap_or(StatusCode::OK);
         let mut h = HeaderMap::new();
         h.insert("content-type", "text/event-stream".parse().unwrap());
-        let chunks: Vec<Result<Bytes, ClientError>> = self.chunks.iter().cloned().map(Ok).collect();
-        Ok((
-            StatusCode::OK,
-            h,
-            Box::pin(futures_util::stream::iter(chunks)),
-        ))
+        let chunks: VecDeque<FakeStreamItem> = self
+            .stream_scripts
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                self.chunks
+                    .iter()
+                    .cloned()
+                    .map(FakeStreamItem::Chunk)
+                    .collect()
+            })
+            .into();
+        let stream = futures_util::stream::unfold(chunks, |mut chunks| async move {
+            match chunks.pop_front()? {
+                FakeStreamItem::Chunk(chunk) => Some((Ok(chunk), chunks)),
+                FakeStreamItem::Error(error) => {
+                    Some((Err(ClientError::Transport(error.into())), chunks))
+                }
+                FakeStreamItem::Pending => std::future::pending().await,
+            }
+        });
+        Ok((status, h, Box::pin(stream)))
     }
 
     async fn open_websocket(
@@ -119,8 +152,14 @@ impl FakeUpstream {
             statuses: vec![StatusCode::OK],
             response,
             chunks,
+            stream_scripts: Mutex::new(VecDeque::new()),
             calls: AtomicUsize::new(0),
         }
+    }
+
+    fn with_stream_scripts(mut self, scripts: Vec<Vec<FakeStreamItem>>) -> Self {
+        self.stream_scripts = Mutex::new(scripts.into());
+        self
     }
 
     fn capture(&self, req: &http::Request<Bytes>) {
@@ -707,6 +746,7 @@ async fn scoped_variant_suffix_strips_to_base() {
 mod aggregate;
 mod authz;
 mod billing;
+mod custom_raw;
 mod envelope;
 mod health;
 mod local;

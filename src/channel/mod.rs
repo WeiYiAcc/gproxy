@@ -116,6 +116,19 @@ pub trait Channel: Send + Sync {
     /// Pure access — no transform/rules, no body mutation. Moves `ctx.body` in.
     fn prepare(&self, ctx: PrepareCtx<'_>) -> Result<PreparedRequest, ChannelError>;
 
+    /// Preserve passthrough request bytes exactly, bypassing automatic model
+    /// rewriting and stream usage-option injection. Explicit process rules still
+    /// apply. Default: false.
+    fn preserve_raw_request_body(&self, _provider_settings: &Value) -> bool {
+        false
+    }
+
+    /// Consume a passthrough OpenAI SSE response up to its first effective data
+    /// event before committing it to the client. Default: false.
+    fn prefetch_stream_before_commit(&self, _provider_settings: &Value) -> bool {
+        false
+    }
+
     /// Map an upstream response to the 5-state [`Disposition`]. Default is the
     /// generic HTTP-status mapping; override only for provider-specific signals.
     /// For streaming, `body` is empty (status + headers suffice).

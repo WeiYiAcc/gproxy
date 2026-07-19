@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { DEFAULT_BASE_URL } from "@/lib/channel-meta";
 
@@ -30,9 +31,14 @@ const CLAUDE_FALLBACK_CHANNELS = new Set(["claudecode", "claudeapi", "vercel", "
 // ChatGPT session mode (普通 / 临时聊天 / 进项目). Persisted as `mode` in settings.
 const CHATGPT_MODES = ["normal", "temporary", "project"] as const;
 type ChatgptMode = (typeof CHATGPT_MODES)[number];
+const API_KEY_HEADERS = ["bearer", "x-api-key", "x-goog-api-key"] as const;
+type ApiKeyHeader = (typeof API_KEY_HEADERS)[number];
 
 export interface SettingsState {
   baseUrl: string;
+  apiKeyHeader: ApiKeyHeader;
+  preserveRawRequestBody: boolean;
+  prefetchStreamBeforeCommit: boolean;
   consecutiveFailures: string;
   cooldownSecs: string;
   autoRefreshModels: boolean;
@@ -56,6 +62,11 @@ export function initSettingsState(settingsJson: unknown): SettingsState {
       : "temporary";
   return {
     baseUrl: typeof s.base_url === "string" ? s.base_url : "",
+    apiKeyHeader: API_KEY_HEADERS.includes(s.api_key_header as ApiKeyHeader)
+      ? (s.api_key_header as ApiKeyHeader)
+      : "bearer",
+    preserveRawRequestBody: s.preserve_raw_request_body === true,
+    prefetchStreamBeforeCommit: s.prefetch_stream_before_commit === true,
     consecutiveFailures:
       typeof cb.consecutive_failures === "number"
         ? String(cb.consecutive_failures)
@@ -88,6 +99,24 @@ export function assembleSettings(
     result.base_url = state.baseUrl.trim();
   } else {
     delete result.base_url;
+  }
+
+  if (channel === "custom") {
+    result.api_key_header = state.apiKeyHeader;
+    if (state.preserveRawRequestBody) {
+      result.preserve_raw_request_body = true;
+    } else {
+      delete result.preserve_raw_request_body;
+    }
+    if (state.prefetchStreamBeforeCommit) {
+      result.prefetch_stream_before_commit = true;
+    } else {
+      delete result.prefetch_stream_before_commit;
+    }
+  } else {
+    delete result.api_key_header;
+    delete result.preserve_raw_request_body;
+    delete result.prefetch_stream_before_commit;
   }
 
   // circuit_breaker: include only when BOTH fields are filled
@@ -185,10 +214,56 @@ export function SettingsFields({ channel, state, onChange }: SettingsFieldsProps
                 : t("form.baseUrlHint")
           }
         />
-        {!isCustom && (
+        {isCustom ? (
+          <p className="text-xs text-muted-foreground">{t("form.customBaseUrlHint")}</p>
+        ) : (
           <p className="text-xs text-muted-foreground">{t("form.baseUrlHint")}</p>
         )}
       </div>
+
+      {isCustom && (
+        <>
+          <div className="grid gap-2">
+            <Label htmlFor="sf-api-key-header">{t("fields.apiKeyHeader")}</Label>
+            <Select
+              value={state.apiKeyHeader}
+              onValueChange={(value) => onChange({ apiKeyHeader: value as ApiKeyHeader })}
+            >
+              <SelectTrigger id="sf-api-key-header" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {API_KEY_HEADERS.map((value) => (
+                  <SelectItem key={value} value={value}>{value}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">{t("form.apiKeyHeaderHint")}</p>
+          </div>
+          <div className="grid gap-1">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="sf-preserve-raw">{t("fields.preserveRawRequestBody")}</Label>
+              <Switch
+                id="sf-preserve-raw"
+                checked={state.preserveRawRequestBody}
+                onCheckedChange={(value) => onChange({ preserveRawRequestBody: value })}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">{t("form.preserveRawRequestBodyHint")}</p>
+          </div>
+          <div className="grid gap-1">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="sf-prefetch-stream">{t("fields.prefetchStreamBeforeCommit")}</Label>
+              <Switch
+                id="sf-prefetch-stream"
+                checked={state.prefetchStreamBeforeCommit}
+                onCheckedChange={(value) => onChange({ prefetchStreamBeforeCommit: value })}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">{t("form.prefetchStreamBeforeCommitHint")}</p>
+          </div>
+        </>
+      )}
 
       {/* circuit breaker */}
       <div className="grid gap-2">

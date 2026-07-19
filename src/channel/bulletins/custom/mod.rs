@@ -70,10 +70,25 @@ impl Channel for CustomChannel {
     }
 
     fn prepare(&self, ctx: PrepareCtx<'_>) -> Result<PreparedRequest, ChannelError> {
-        // Decide the auth style from the inbound path BEFORE `ctx` is consumed.
+        // Resolve settings and path-driven compatibility before `ctx` is consumed.
+        let configured_header = auth::configured(ctx.provider_settings)?;
         let proto = auth::detect(ctx.path);
         let (mut req, key) = common::build_request(ctx, &DEFAULTS)?;
-        auth::apply(&mut req, &key, proto)?;
+        auth::apply(&mut req, &key, configured_header, proto)?;
         Ok(PreparedRequest::new(req))
+    }
+
+    fn preserve_raw_request_body(&self, provider_settings: &serde_json::Value) -> bool {
+        provider_settings
+            .get("preserve_raw_request_body")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    fn prefetch_stream_before_commit(&self, provider_settings: &serde_json::Value) -> bool {
+        provider_settings
+            .get("prefetch_stream_before_commit")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
     }
 }

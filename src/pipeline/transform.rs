@@ -58,11 +58,22 @@ pub fn request_parts(
     plan: &TransformPlan,
     rules: Option<&[process::CompiledRule]>,
     memo: &mut AttemptMemo,
+    preserve_raw_body: bool,
 ) -> Result<RequestParts, PipelineError> {
     let op = ctx.op.expect("classified before failover");
     let (mut parts, target_key) = match plan {
         // Local plans never reach request building — failover serves them.
         TransformPlan::Local => return Err(PipelineError::LocalUnimplemented),
+        TransformPlan::Passthrough if preserve_raw_body => (
+            RequestParts {
+                method: ctx.method.clone(),
+                path: ctx.path.clone(),
+                query: ctx.query.clone(),
+                body: ctx.body.clone(),
+                headers: None,
+            },
+            op,
+        ),
         TransformPlan::Passthrough => {
             let mut path = ctx.path.clone();
             let mut query = ctx.query.clone();

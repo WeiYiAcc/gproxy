@@ -74,7 +74,14 @@ pub(super) async fn attempt(
     // request_parts is memoized per (target, model) — re-running it on the
     // AuthDead retry returns the same (cached) body; cheap and idempotent. A
     // build/transform error is config, not a key fault — no health record.
-    let mut parts = transform_step::request_parts(ctx, cand, plan, rules, memo)?;
+    let mut parts = transform_step::request_parts(
+        ctx,
+        cand,
+        plan,
+        rules,
+        memo,
+        channel.preserve_raw_request_body(&cand.provider.settings_json),
+    )?;
 
     // Channel REQUEST 整形 before prepare: field hygiene + header-token removal.
     // Mutates the headers that flow into PrepareCtx. Idempotent, so re-running on
@@ -252,6 +259,41 @@ pub(super) async fn attempt(
         BodySource::Buffered(b) => channel.classify(status, &headers, b),
         BodySource::Streaming(_) => channel.classify(status, &headers, &Bytes::new()),
     };
+    let prefetch_stream = channel.prefetch_stream_before_commit(&cand.provider.settings_json)
+        && matches!(plan, TransformPlan::Passthrough)
+        && ctx.stream
+        && matches!(
+            ctx.op.map(|op| op.kind),
+            Some(crate::protocol::OperationKind::ContentGeneration(
+                ContentGenerationKind::OpenAiChatCompletions
+            ))
+        );
+    let source = if prefetch_stream && disposition.is_success() {
+        match source {
+            BodySource::Streaming(stream) => match prefetch_effective_sse(stream).await {
+                Ok(stream) => BodySource::Streaming(stream),
+                Err(error) => {
+                    health_hooks::record_failure(state, cand);
+                    settle::audit_failure(
+                        state,
+                        &ctx.request_id,
+                        cand,
+                        settle::FailedAttempt {
+                            url: &sent_url,
+                            method: method.as_str(),
+                            status: i64::from(status.as_u16()),
+                            latency_ms: send_ms.map(|ms| ms as i64).unwrap_or(0),
+                            error: &error,
+                        },
+                    );
+                    return Err(PipelineError::Transport(error));
+                }
+            },
+            source => source,
+        }
+    } else {
+        source
+    };
 
     Ok(AttemptOutcome {
         status,
@@ -265,6 +307,127 @@ pub(super) async fn attempt(
         sent_headers,
         multi_step,
     })
+}
+
+/// Bound pre-commit buffering so a keepalive-only upstream cannot retain an
+/// unbounded response. Native builds also cap total prefetch wait time.
+#[cfg(not(test))]
+const PREFETCH_MAX_BYTES: usize = 256 * 1024;
+#[cfg(test)]
+const PREFETCH_MAX_BYTES: usize = 256;
+#[cfg(all(not(target_arch = "wasm32"), not(test)))]
+const PREFETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+#[cfg(all(not(target_arch = "wasm32"), test))]
+const PREFETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
+
+async fn prefetch_effective_sse(
+    stream: crate::http::client::RespStream,
+) -> Result<crate::http::client::RespStream, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return tokio::time::timeout(PREFETCH_TIMEOUT, prefetch_effective_sse_inner(stream))
+        .await
+        .map_err(|_| "stream timed out before effective output".to_string())?;
+
+    #[cfg(target_arch = "wasm32")]
+    prefetch_effective_sse_inner(stream).await
+}
+
+async fn prefetch_effective_sse_inner(
+    mut stream: crate::http::client::RespStream,
+) -> Result<crate::http::client::RespStream, String> {
+    use futures_util::StreamExt;
+
+    let mut decoder = crate::transform::common::sse::SseDecoder::new();
+    let mut prefetched = Vec::new();
+    let mut prefetched_bytes = 0usize;
+    while let Some(item) = stream.next().await {
+        let chunk = item.map_err(|error| format!("stream failed before output: {error}"))?;
+        if chunk.is_empty() {
+            continue;
+        }
+        prefetched_bytes = prefetched_bytes.saturating_add(chunk.len());
+        if prefetched_bytes > PREFETCH_MAX_BYTES {
+            return Err(format!(
+                "stream exceeded {PREFETCH_MAX_BYTES} bytes before effective output"
+            ));
+        }
+        let frames = decoder.push(&chunk);
+        prefetched.push(chunk);
+        for frame in frames {
+            match classify_prefetch_sse_frame(&frame) {
+                PrefetchSseFrame::Error => {
+                    return Err("upstream returned an error event before output".into());
+                }
+                PrefetchSseFrame::Effective => return Ok(replay_prefetched(prefetched, stream)),
+                PrefetchSseFrame::Keepalive => {}
+            }
+        }
+    }
+
+    if let Some(frame) = decoder.finish() {
+        match classify_prefetch_sse_frame(&frame) {
+            PrefetchSseFrame::Error => {
+                return Err("upstream returned an error event before output".into());
+            }
+            PrefetchSseFrame::Effective => return Ok(replay_prefetched(prefetched, stream)),
+            PrefetchSseFrame::Keepalive => {}
+        }
+    }
+    Err("stream ended before effective output".into())
+}
+
+enum PrefetchSseFrame {
+    Keepalive,
+    Effective,
+    Error,
+}
+
+fn classify_prefetch_sse_frame(
+    frame: &crate::transform::common::sse::SseFrame,
+) -> PrefetchSseFrame {
+    if frame
+        .event
+        .as_deref()
+        .is_some_and(|event| event.eq_ignore_ascii_case("error"))
+    {
+        return PrefetchSseFrame::Error;
+    }
+    let data = frame.data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return PrefetchSseFrame::Keepalive;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(data) {
+        if value.get("error").is_some()
+            || value.get("type").and_then(Value::as_str) == Some("error")
+        {
+            return PrefetchSseFrame::Error;
+        }
+        if matches!(
+            value.get("type").and_then(Value::as_str),
+            Some("ping" | "keepalive" | "keep_alive")
+        ) {
+            return PrefetchSseFrame::Keepalive;
+        }
+    }
+    if frame.event.as_deref().is_some_and(|event| {
+        matches!(
+            event.to_ascii_lowercase().as_str(),
+            "ping" | "keepalive" | "keep-alive"
+        )
+    }) {
+        return PrefetchSseFrame::Keepalive;
+    }
+    PrefetchSseFrame::Effective
+}
+
+fn replay_prefetched(
+    prefetched: Vec<Bytes>,
+    stream: crate::http::client::RespStream,
+) -> crate::http::client::RespStream {
+    use futures_util::StreamExt;
+
+    let first = Bytes::from(prefetched.concat());
+    Box::pin(futures_util::stream::once(async move { Ok(first) }).chain(stream))
 }
 
 /// §14.5 refresh failure handling at the lazy pre-use seam: cool the credential

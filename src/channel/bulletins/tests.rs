@@ -141,6 +141,80 @@ fn custom_protocol_driven_auth() {
 }
 
 #[test]
+fn custom_configures_only_supported_api_key_headers() {
+    let secret = json!({ "api_key": "k" });
+    let mut inbound = HeaderMap::new();
+    inbound.insert("authorization", "Bearer client".parse().unwrap());
+    inbound.insert("x-api-key", "client-x".parse().unwrap());
+    inbound.insert("x-goog-api-key", "client-google".parse().unwrap());
+
+    for (setting, expected, absent) in [
+        ("bearer", "authorization", ["x-api-key", "x-goog-api-key"]),
+        (
+            "x-api-key",
+            "x-api-key",
+            ["authorization", "x-goog-api-key"],
+        ),
+        (
+            "x-goog-api-key",
+            "x-goog-api-key",
+            ["authorization", "x-api-key"],
+        ),
+    ] {
+        let settings = json!({
+            "base_url": "https://up.example",
+            "api_key_header": setting,
+        });
+        let req = custom::CustomChannel
+            .prepare(prep(
+                &settings,
+                &secret,
+                &inbound,
+                Method::POST,
+                "/v1/chat/completions",
+            ))
+            .unwrap()
+            .into_http();
+        let expected_value = if setting == "bearer" { "Bearer k" } else { "k" };
+        assert_eq!(req.headers().get(expected).unwrap(), expected_value);
+        for name in absent {
+            assert!(
+                req.headers().get(name).is_none(),
+                "{setting}: leaked {name}"
+            );
+        }
+    }
+
+    let settings = json!({
+        "base_url": "https://up.example",
+        "api_key_header": "arbitrary-header",
+    });
+    let err = custom::CustomChannel
+        .prepare(prep(
+            &settings,
+            &secret,
+            &inbound,
+            Method::POST,
+            "/v1/chat/completions",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, ChannelError::Build(_)));
+}
+
+#[test]
+fn custom_raw_settings_default_false_and_opt_in() {
+    let channel = custom::CustomChannel;
+    assert!(!channel.preserve_raw_request_body(&json!({})));
+    assert!(!channel.prefetch_stream_before_commit(&json!({})));
+    let settings = json!({
+        "preserve_raw_request_body": true,
+        "prefetch_stream_before_commit": true,
+    });
+    assert!(channel.preserve_raw_request_body(&settings));
+    assert!(channel.prefetch_stream_before_commit(&settings));
+}
+
+#[test]
 fn custom_requires_base_url() {
     let settings = json!({});
     let secret = json!({ "api_key": "k" });
